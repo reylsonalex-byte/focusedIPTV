@@ -1,9 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -11,168 +12,144 @@ import {
   View,
 } from 'react-native';
 
-const normalizePortalUrl = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-
-  return /^https?:\/\//i.test(trimmed)
-    ? trimmed.replace(/\/+$/, '')
-    : `http://${trimmed.replace(/\/+$/, '')}`;
-};
-
-export default function Login() {
+export default function LoginScreen() {
   const router = useRouter();
 
   const [url, setUrl] = useState('');
-  const [user, setUser] = useState('');
-  const [pass, setPass] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    const normalizedUrl = normalizePortalUrl(url);
-    const normalizedUser = user.trim();
-    const normalizedPass = pass.trim();
-
-    if (!normalizedUrl || !normalizedUser || !normalizedPass) {
-      Alert.alert('Erro', 'Preencha todos os campos');
+    if (!url.trim() || !username.trim() || !password.trim()) {
       return;
     }
 
     try {
       setLoading(true);
 
-      const data = {
-        url: normalizedUrl,
-        username: normalizedUser,
-        password: normalizedPass,
-      };
-
-      await AsyncStorage.setItem('@iptv_login', JSON.stringify(data));
+      await AsyncStorage.setItem(
+        '@iptv_login',
+        JSON.stringify({
+          url: url.trim().replace(/\/+$/, ''),
+          username: username.trim(),
+          password: password.trim(),
+        })
+      );
 
       router.replace('/(tabs)/dashboard');
-    } catch {
-      Alert.alert('Erro', 'Falha ao salvar login');
+    } catch (e) {
+      console.log('Erro ao salvar login:', e);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>KING IPTV</Text>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <View style={styles.card}>
+        <Text style={styles.brand}>
+          FOCUSED <Text style={styles.brandAccent}>IPTV</Text>
+        </Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="DNS http://..."
-        placeholderTextColor="#666"
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        value={url}
-        onChangeText={setUrl}
-      />
+        <Text style={styles.subtitle}>
+          Acesse sua conta com uma experiência premium.
+        </Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Usuario"
-        placeholderTextColor="#666"
-        autoCapitalize="none"
-        autoCorrect={false}
-        value={user}
-        onChangeText={setUser}
-      />
-
-      <View style={styles.passwordRow}>
         <TextInput
-          style={[styles.input, styles.passwordInput]}
-          placeholder="Senha"
-          placeholderTextColor="#666"
-          secureTextEntry={!showPassword}
+          style={styles.input}
+          placeholder="DNS / URL do painel"
+          placeholderTextColor="#7A7A85"
+          value={url}
+          onChangeText={setUrl}
           autoCapitalize="none"
-          autoCorrect={false}
-          value={pass}
-          onChangeText={setPass}
         />
 
-        <Pressable
-          onPress={() => setShowPassword((value) => !value)}
-          style={styles.eyeBtn}
-          hitSlop={10}
-        >
-          <Ionicons
-            name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-            size={18}
-            color="#fff"
-          />
-          <Text style={styles.eyeText}>
-            {showPassword ? 'Ocultar' : 'Mostrar'}
-          </Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Usuário"
+          placeholderTextColor="#7A7A85"
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Senha"
+          placeholderTextColor="#7A7A85"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+
+        <Pressable style={styles.button} onPress={handleLogin} disabled={loading}>
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.buttonText}>Entrar</Text>
+          )}
         </Pressable>
       </View>
-
-      <Pressable style={styles.button} onPress={handleLogin}>
-        <Text style={styles.buttonText}>
-          {loading ? 'Entrando...' : 'ENTRAR'}
-        </Text>
-      </Pressable>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0B0F',
+    backgroundColor: '#09090C',
     justifyContent: 'center',
-    padding: 24,
+    padding: 20,
   },
-  title: {
-    color: '#fff',
-    fontSize: 34,
-    fontWeight: '800',
+  card: {
+    backgroundColor: '#13131A',
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#1F1F28',
+  },
+  brand: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontWeight: '900',
     textAlign: 'center',
-    marginBottom: 40,
+    letterSpacing: 1.5,
+  },
+  brandAccent: {
+    color: '#7C3AED',
+  },
+  subtitle: {
+    color: '#A1A1AA',
+    textAlign: 'center',
+    marginTop: 10,
+    marginBottom: 24,
+    lineHeight: 20,
   },
   input: {
-    backgroundColor: '#1A1A22',
-    padding: 14,
-    borderRadius: 10,
-    color: '#fff',
+    backgroundColor: '#1B1B24',
+    borderWidth: 1,
+    borderColor: '#252532',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: '#FFFFFF',
     marginBottom: 12,
-  },
-  passwordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  passwordInput: {
-    flex: 1,
-    marginBottom: 0,
-  },
-  eyeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#23232D',
-    paddingHorizontal: 12,
-    height: 48,
-    borderRadius: 10,
-    marginLeft: 10,
-  },
-  eyeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
   },
   button: {
+    marginTop: 8,
     backgroundColor: '#7C3AED',
-    padding: 16,
-    borderRadius: 10,
+    borderRadius: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 15,
   },
   buttonText: {
-    color: '#fff',
-    fontWeight: '700',
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 16,
   },
 });
