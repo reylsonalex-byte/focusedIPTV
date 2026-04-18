@@ -1,147 +1,107 @@
-const ensureProtocol = (url: string) =>
-  /^https?:\/\//i.test(url) ? url : `http://${url}`;
+const DEFAULT_TIMEOUT = 12000;
 
-const stripPlayerApi = (url: string) =>
-  url.replace(/\/?player_api\.php(?:[?#].*)?$/i, '');
+const normalizeBaseUrl = (baseUrl: string) => baseUrl.replace(/\/+$/, '');
 
-const normalizeBaseUrl = (url: string) => {
-  const trimmed = url.trim();
-  if (!trimmed) return '';
-
-  const withProtocol = ensureProtocol(trimmed).replace(/\/+$/, '');
-
-  try {
-    const parsed = new URL(withProtocol);
-    parsed.hash = '';
-    parsed.search = '';
-    parsed.pathname = stripPlayerApi(parsed.pathname).replace(/\/+$/, '');
-
-    return parsed.toString().replace(/\/+$/, '');
-  } catch {
-    return stripPlayerApi(withProtocol).replace(/\/+$/, '');
-  }
+export const buildPlayerApiUrl = (baseUrl: string) => {
+  return `${normalizeBaseUrl(baseUrl)}/player_api.php`;
 };
-
-const normalizeExtension = (extension?: string | null) => {
-  const value = typeof extension === 'string' ? extension.trim() : '';
-  if (!value) return 'mp4';
-  return value.startsWith('.') ? value.slice(1) : value;
-};
-
-const normalizeLiveExtension = (extension?: string | null) => {
-  const value = typeof extension === 'string' ? extension.trim() : '';
-  if (!value) return 'm3u8';
-  return value.startsWith('.') ? value.slice(1) : value;
-};
-
-const encode = (value: string | number) => encodeURIComponent(String(value));
-
-export const buildPlayerApiUrl = (baseUrl: string) =>
-  `${normalizeBaseUrl(baseUrl)}/player_api.php`;
 
 export const buildVodListUrl = (
   baseUrl: string,
   username: string,
   password: string
-) =>
-  `${buildPlayerApiUrl(baseUrl)}?username=${encode(username.trim())}&password=${encode(
-    password.trim()
-  )}&action=get_vod_streams`;
+) => {
+  return `${buildPlayerApiUrl(baseUrl)}?username=${encodeURIComponent(
+    username
+  )}&password=${encodeURIComponent(password)}&action=get_vod_streams`;
+};
 
 export const buildLiveListUrl = (
   baseUrl: string,
   username: string,
   password: string
-) =>
-  `${buildPlayerApiUrl(baseUrl)}?username=${encode(username.trim())}&password=${encode(
-    password.trim()
-  )}&action=get_live_streams`;
+) => {
+  return `${buildPlayerApiUrl(baseUrl)}?username=${encodeURIComponent(
+    username
+  )}&password=${encodeURIComponent(password)}&action=get_live_streams`;
+};
 
-export const buildSeriesListUrl = (
+export const buildVodInfoUrl = (
   baseUrl: string,
   username: string,
-  password: string
-) =>
-  `${buildPlayerApiUrl(baseUrl)}?username=${encode(username.trim())}&password=${encode(
-    password.trim()
-  )}&action=get_series`;
+  password: string,
+  vodId: string | number
+) => {
+  return `${buildPlayerApiUrl(baseUrl)}?username=${encodeURIComponent(
+    username
+  )}&password=${encodeURIComponent(password)}&action=get_vod_info&vod_id=${vodId}`;
+};
 
 export const buildVodUrl = (
   baseUrl: string,
   username: string,
   password: string,
-  streamId: string | number,
-  extension?: string | null
-) =>
-  `${normalizeBaseUrl(baseUrl)}/movie/${encode(username.trim())}/${encode(
-    password.trim()
-  )}/${encode(streamId)}.${encode(normalizeExtension(extension))}`;
+  id: string | number,
+  extension = 'mp4'
+) => {
+  return `${normalizeBaseUrl(baseUrl)}/movie/${encodeURIComponent(
+    username
+  )}/${encodeURIComponent(password)}/${id}.${extension}`;
+};
 
 export const buildLiveUrl = (
   baseUrl: string,
   username: string,
   password: string,
-  streamId: string | number,
-  extension?: string | null
-) =>
-  `${normalizeBaseUrl(baseUrl)}/live/${encode(username.trim())}/${encode(
-    password.trim()
-  )}/${encode(streamId)}.${encode(normalizeLiveExtension(extension))}`;
+  id: string | number,
+  extension = 'm3u8'
+) => {
+  return `${normalizeBaseUrl(baseUrl)}/live/${encodeURIComponent(
+    username
+  )}/${encodeURIComponent(password)}/${id}.${extension}`;
+};
 
 export const buildSeriesEpisodeUrl = (
   baseUrl: string,
   username: string,
   password: string,
   episodeId: string | number,
-  extension?: string | null
-) =>
-  `${normalizeBaseUrl(baseUrl)}/series/${encode(username.trim())}/${encode(
-    password.trim()
-  )}/${encode(episodeId)}.${encode(normalizeExtension(extension))}`;
+  extension = 'mp4'
+) => {
+  return `${normalizeBaseUrl(baseUrl)}/series/${encodeURIComponent(
+    username
+  )}/${encodeURIComponent(password)}/${episodeId}.${extension}`;
+};
 
-export const buildShortEpgUrl = (
-  baseUrl: string,
-  username: string,
-  password: string,
-  streamId: string | number,
-  limit = 5
-) =>
-  `${buildPlayerApiUrl(baseUrl)}?username=${encode(username.trim())}&password=${encode(
-    password.trim()
-  )}&action=get_short_epg&stream_id=${encode(streamId)}&limit=${encode(limit)}`;
-
-export const fetchSafe = async (url: string, timeout = 10000) => {
+export const fetchSafe = async (
+  url: string,
+  options: RequestInit = {},
+  timeout = DEFAULT_TIMEOUT
+) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const res = await fetch(url, {
+    const response = await fetch(url, {
+      ...options,
       signal: controller.signal,
     });
 
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      throw new Error(`HTTP ERROR: ${res.status}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    const text = await res.text();
+    const text = await response.text();
 
     try {
       return JSON.parse(text);
     } catch {
-      console.log('Resposta nao e JSON valido');
-      return null;
+      return text;
     }
-  } catch (err: any) {
-    clearTimeout(timer);
-
-    if (err?.name === 'AbortError') {
-      console.log('Timeout da API atingido');
-    } else {
-      console.log('Erro fetch:', err?.message || err);
-    }
-
+  } catch (error) {
+    console.log('fetchSafe error:', error);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 };
