@@ -1,0 +1,33 @@
+name: Local Ollama Config
+version: 1.0.0
+schema: v1
+
+models:
+  - name: Qwen2.5-Coder
+    provider: ollama
+    model: qwen2.5-coder:7b
+    roles:
+      - chat
+      - edit
+      - apply
+      - summarize
+
+  - name: Qwen2.5-Coder Autocomplete
+    provider: ollama
+    model: qwen2.5-coder:7b
+    roles:
+      - autocomplete
+
+  - name: Nomic Embed
+    provider: ollama
+    model: nomic-embed-text
+    roles:
+      - embed
+
+context:
+  - provider: code
+  - provider: docs
+
+rules:
+  - Keep edits minimal and preserve existing project style.
+  - Prefer fixing the root cause instead of adding workarounds.
