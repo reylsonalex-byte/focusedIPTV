@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "King IPTV",
+    "slug": "kingiptv",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "kingiptv",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "expo-router",
+      "expo-video"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.king.iptv",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F0F0F"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
