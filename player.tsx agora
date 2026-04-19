@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -35,6 +35,581 @@ type VodInfoResponse = {
     duration?: string | number;
     movie_image?: string;
     cover_big?: string;
+    stream_icon?: string;
+    container_extension?: string;
+    direct_source?: string;
+    genre?: string;
+  };
+  movie_data?: {
+    name?: string;
+    plot?: string;
+    year?: string | number;
+    rating?: string | number;
+    duration?: string | number;
+    movie_image?: string;
+    cover_big?: string;
+    stream_icon?: string;
+    container_extension?: string;
+    direct_source?: string;
+    genre?: string;
+  };
+};
+
+const cleanString = (value: unknown) =>
+  typeof value === 'string' ? value.trim() : '';
+
+const displayValue = (value: unknown) => {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+};
+
+const formatClock = (seconds: number) => {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${String(rest).padStart(2, '0')}`;
+};
+
+export default function Player() {
+  const params = useLocalSearchParams();
+  const router = useRouter();
+  const videoRef = useRef<Video | null>(null);
+
+  const contentId = typeof params.id === 'string' ? params.id : '';
+  const initialTitle = typeof params.title === 'string' ? params.title : '';
+  const directStreamUrl =
+    typeof params.streamUrl === 'string' ? params.streamUrl : '';
+
+  const historyKey = contentId || directStreamUrl || 'playback';
+
+  const [streamUrl, setStreamUrl] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [playerReady, setPlayerReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [title, setTitle] = useState(initialTitle || 'Conteúdo');
+  const [posterUri, setPosterUri] = useState('');
+  const [plot, setPlot] = useState('Sem sinopse disponível.');
+  const [meta, setMeta] = useState({
+    year: '',
+    rating: '',
+    duration: '',
+    genre: '',
+  });
+  const [resumeSeconds, setResumeSeconds] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [durationSec, setDurationSec] = useState(0);
+
+  const resumeTimeRef = useRef(0);
+  const hasSeekedRef = useRef(false);
+
+  useEffect(() => {
+    const enableRotation = async () => {
+      try {
+        await ScreenOrientation.lockAsync(
+          ScreenOrientation.OrientationLock.ALL_BUT_UPSIDE_DOWN
+        );
+      } catch (e) {
+        console.log('Erro ao liberar rotação no player:', e);
+      }
+    };
+
+    void enableRotation();
+
+    return () => {
+      void ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP
+      ).catch((e) => console.log('Erro ao restaurar portrait:', e));
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const stored = await AsyncStorage.getItem('@iptv_login');
+        if (!stored) {
+          router.replace('/');
+          return;
+        }
+
+        const login = JSON.parse(stored) as LoginData;
+
+        const history = await getHistory();
+        const historyItem = history.find(
+          (item) =>
+            item.id === historyKey ||
+            item.id === contentId ||
+            item.streamUrl === directStreamUrl
+        );
+
+        const savedProgress = historyItem?.progress ?? 0;
+        resumeTimeRef.current = savedProgress;
+        setResumeSeconds(savedProgress);
+
+        let nextTitle = initialTitle || historyItem?.name || 'Conteúdo';
+        let nextPoster = historyItem?.posterUri || '';
+        let nextPlot = 'Sem sinopse disponível.';
+        let nextMeta = {
+          year: '',
+          rating: '',
+          duration: '',
+          genre: '',
+        };
+        let nextStream = directStreamUrl;
+
+        if (!nextStream) {
+          if (!contentId) {
+            throw new Error('Id inválido');
+          }
+
+          const infoUrl = buildVodInfoUrl(
+            login.url,
+            login.username,
+            login.password,
+            contentId
+          );
+
+          const response = (await fetchSafe(
+            infoUrl,
+            {},
+            15000
+          )) as VodInfoResponse | null;
+
+          const movie = response?.movie_data ?? {};
+          const info = response?.info ?? {};
+
+          const directSource =
+            cleanString(movie.direct_source) ||
+            cleanString(info.direct_source);
+
+          const containerExtension =
+            cleanString(movie.container_extension) ||
+            cleanString(info.container_extension) ||
+            'mp4';
+
+          nextTitle =
+            initialTitle ||
+            cleanString(movie.name) ||
+            cleanString(info.name) ||
+            nextTitle;
+
+          nextPoster = getPosterUri(
+            movie.movie_image,
+            info.movie_image,
+            movie.cover_big,
+            info.cover_big,
+            movie.stream_icon,
+            info.stream_icon,
+            nextPoster
+          );
+
+          nextPlot =
+            cleanString(movie.plot) ||
+            cleanString(info.plot) ||
+            nextPlot;
+
+          nextMeta = {
+            year: displayValue(movie.year) || displayValue(info.year),
+            rating: displayValue(movie.rating) || displayValue(info.rating),
+            duration:
+              displayValue(movie.duration) || displayValue(info.duration),
+            genre: cleanString(movie.genre) || cleanString(info.genre),
+          };
+
+          nextStream = directSource
+            ? directSource
+            : buildVodUrl(
+                login.url,
+                login.username,
+                login.password,
+                contentId,
+                containerExtension
+              );
+        }
+
+        if (!nextStream) {
+          throw new Error('Stream indisponível');
+        }
+
+        if (cancelled) return;
+
+        setTitle(nextTitle);
+        setPosterUri(nextPoster);
+        setPlot(nextPlot);
+        setMeta(nextMeta);
+        setStreamUrl(nextStream);
+
+        await saveHistory({
+          id: historyKey,
+          name: nextTitle,
+          streamUrl: nextStream,
+          posterUri: nextPoster,
+          progress: savedProgress,
+          duration: historyItem?.duration ?? 0,
+          updatedAt: Date.now(),
+        });
+      } catch (e) {
+        console.log('Player load error:', e);
+        if (!cancelled) {
+          setError('Não foi possível carregar este conteúdo.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contentId, directStreamUrl, historyKey, initialTitle, router]);
+
+  const metaLine = useMemo(() => {
+    return [meta.year, meta.rating, meta.duration, meta.genre]
+      .filter(Boolean)
+      .join(' • ');
+  }, [meta]);
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <StatusBar style="light" />
+        <ActivityIndicator size="large" color="#FFFFFF" />
+        <Text style={styles.loadingText}>Preparando player premium...</Text>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar style="light" />
+
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.hero}>
+          <LinearGradient
+            colors={['rgba(5,5,7,0.55)', 'rgba(5,5,7,0.80)', '#09090C']}
+            style={styles.heroOverlay}
+          >
+            <View style={styles.topRow}>
+              <Pressable onPress={() => router.back()} style={styles.backBtn}>
+                <Ionicons name="arrow-back" size={22} color="#FFF" />
+              </Pressable>
+
+              <View style={styles.resumePill}>
+                <Ionicons
+                  name="phone-landscape-outline"
+                  size={14}
+                  color="#E9D5FF"
+                />
+                <Text style={styles.resumeText}>Rotação automática ativa</Text>
+              </View>
+            </View>
+
+            <View style={styles.playerShell}>
+              {streamUrl ? (
+                <Video
+                  ref={videoRef}
+                  source={{ uri: streamUrl }}
+                  style={styles.video}
+                  controls
+                  resizeMode="contain"
+                  paused={paused}
+                  pictureInPicture
+                  playInBackground={false}
+                  playWhenInactive={false}
+                  progressUpdateInterval={3000}
+                  onLoad={(data: any) => {
+                    setPlayerReady(true);
+                    setDurationSec(Number(data?.duration || 0));
+
+                    if (!hasSeekedRef.current && resumeTimeRef.current > 0) {
+                      hasSeekedRef.current = true;
+                      videoRef.current?.seek(resumeTimeRef.current);
+                    }
+                  }}
+                  onProgress={(data: any) => {
+                    const currentTime = Math.max(
+                      0,
+                      Math.floor(data?.currentTime || 0)
+                    );
+
+                    resumeTimeRef.current = currentTime;
+
+                    if (currentTime > 0) {
+                      void updateProgress(
+                        historyKey,
+                        currentTime,
+                        durationSec || Number(data?.playableDuration || 0)
+                      );
+                    }
+                  }}
+                  onError={(e) => {
+                    console.log('react-native-video error', e);
+                    setError('O player não conseguiu iniciar o vídeo.');
+                  }}
+                />
+              ) : null}
+            </View>
+          </LinearGradient>
+        </View>
+
+        <View style={styles.detailsWrap}>
+          <View style={styles.headerBlock}>
+            {posterUri ? (
+              <Image source={{ uri: posterUri }} style={styles.poster} />
+            ) : null}
+
+            <View style={styles.headerInfo}>
+              <View style={styles.tag}>
+                <Text style={styles.tagText}>HBO MAX STYLE</Text>
+              </View>
+
+              <Text style={styles.title}>{title}</Text>
+
+              {metaLine ? <Text style={styles.metaLine}>{metaLine}</Text> : null}
+
+              <View style={styles.quickStats}>
+                <View style={styles.quickStatCard}>
+                  <Ionicons
+                    name="play-circle-outline"
+                    size={18}
+                    color="#C4B5FD"
+                  />
+                  <Text style={styles.quickStatText}>
+                    {playerReady ? 'Pronto' : 'Carregando'}
+                  </Text>
+                </View>
+
+                <Pressable
+                  style={styles.quickStatCard}
+                  onPress={() => setPaused((v) => !v)}
+                >
+                  <Ionicons
+                    name={paused ? 'play-outline' : 'pause-outline'}
+                    size={18}
+                    color="#C4B5FD"
+                  />
+                  <Text style={styles.quickStatText}>
+                    {paused ? 'Retomar' : 'Pausar'}
+                  </Text>
+                </Pressable>
+
+                <View style={styles.quickStatCard}>
+                  <Ionicons name="time-outline" size={18} color="#C4B5FD" />
+                  <Text style={styles.quickStatText}>
+                    {resumeSeconds > 0 ? formatClock(resumeSeconds) : 'Novo'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          {error ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorCardText}>{error}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.infoCard}>
+            <Text style={styles.sectionTitle}>Sinopse</Text>
+            <Text style={styles.plot}>{plot}</Text>
+          </View>
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#09090C' },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: '#09090C',
+  },
+  loadingText: {
+    color: '#FFF',
+    marginTop: 12,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  errorText: {
+    color: '#FCA5A5',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  content: { paddingBottom: 40 },
+  hero: { backgroundColor: '#0C0C12' },
+  heroOverlay: {
+    paddingTop: 54,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  backBtn: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    padding: 10,
+    borderRadius: 14,
+  },
+  resumePill: {
+    backgroundColor: 'rgba(124,58,237,0.18)',
+    borderColor: 'rgba(124,58,237,0.38)',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  resumeText: {
+    color: '#E9D5FF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  playerShell: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    backgroundColor: '#141418',
+    borderRadius: 22,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#141418',
+  },
+  detailsWrap: {
+    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  headerBlock: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  poster: {
+    width: 122,
+    height: 182,
+    borderRadius: 20,
+    backgroundColor: '#15151C',
+  },
+  headerInfo: {
+    flex: 1,
+    paddingTop: 4,
+  },
+  tag: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(124,58,237,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.28)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 12,
+  },
+  tagText: {
+    color: '#E9D5FF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  title: {
+    color: '#FFF',
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '900',
+  },
+  metaLine: {
+    color: '#C7C7D1',
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  quickStats: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+    flexWrap: 'wrap',
+  },
+  quickStatCard: {
+    backgroundColor: '#13131A',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1F1F28',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  quickStatText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  errorCard: {
+    marginTop: 18,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: 'rgba(248,113,113,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.2)',
+  },
+  errorCardText: {
+    color: '#FECACA',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+  },
+  infoCard: {
+    marginTop: 18,
+    backgroundColor: '#13131A',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#1F1F28',
+    padding: 18,
+  },
+  sectionTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  plot: {
+    color: '#B6B6C3',
+    fontSize: 15,
+    lineHeight: 24,
+  },
+});    cover_big?: string;
     stream_icon?: string;
     container_extension?: string;
     direct_source?: string;
