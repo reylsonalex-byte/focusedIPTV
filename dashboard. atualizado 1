@@ -1,1 +1,883 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  ImageBackground,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
+import { ContentPoster } from '@/components/content-poster';
+import {
+  loadCatalog,
+  loadShortEpg,
+  type CatalogMode,
+  type LoginData,
+} from '@/src/lib/catalog';
+import {
+  getMediaId,
+  getMediaPoster,
+  getMediaTitle,
+  isAdultContent,
+  type MediaBase,
+} from '@/src/lib/content';
+import { getHistory } from '@/src/lib/history';
+import { getPosterUri } from '@/src/lib/media';
+import { pushProtectedRoute } from '@/src/lib/navigation';
+import {
+  getParentalLockEnabled,
+  getUnlockedParentalSession,
+} from '@/src/lib/settings';
+
+type HistoryCard = {
+  id: string;
+  name: string;
+  posterUri?: string;
+  progress: number;
+  duration?: number;
+  streamUrl: string;
+};
+
+type TopMode = {
+  key: CatalogMode;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+};
+
+type SectionConfig = {
+  key: string;
+  title: string;
+  data: MediaBase[];
+  mode: CatalogMode;
+  useCategoryNavigation?: boolean;
+};
+
+const TOP_MODES: TopMode[] = [
+  { key: 'live', label: 'Canais TV', icon: 'tv-outline' },
+  { key: 'vod', label: 'Filmes', icon: 'film-outline' },
+  { key: 'series', label: 'Séries', icon: 'albums-outline' },
+];
+
+const computeProgressPercent = (progress = 0, duration = 0) => {
+  if (!duration || duration <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((progress / duration) * 100)));
+};
+
+const chunkByCategory = (items: MediaBase[], limitSections = 5) => {
+  const groups = new Map<string, MediaBase[]>();
+
+  for (const item of items) {
+    const raw =
+      String(item.category_name ?? item.genre ?? item.category_id ?? '').trim() ||
+      'Geral';
+
+    if (!groups.has(raw)) {
+      groups.set(raw, []);
+    }
+
+    groups.get(raw)?.push(item);
+  }
+
+  return Array.from(groups.entries())
+    .map(([title, data]) => ({ title, data }))
+    .filter((group) => group.data.length > 0)
+    .slice(0, limitSections);
+};
+
+const pickFeatured = (items: MediaBase[]) => {
+  if (!items.length) return null;
+
+  const withPoster = items.filter((item) => {
+    const poster = getMediaPoster(item);
+    return typeof poster === 'string' && poster.trim().length > 0;
+  });
+
+  return withPoster[0] || items[0];
+};
+
+export default function Dashboard() {
+  const router = useRouter();
+
+  const [mode, setMode] = useState<CatalogMode>('live');
+  const [login, setLogin] = useState<LoginData | null>(null);
+
+  const [liveItems, setLiveItems] = useState<MediaBase[]>([]);
+  const [vodItems, setVodItems] = useState<MediaBase[]>([]);
+  const [seriesItems, setSeriesItems] = useState<MediaBase[]>([]);
+  const [continueWatching, setContinueWatching] = useState<HistoryCard[]>([]);
+
+  const [epgMap, setEpgMap] = useState<Record<string, string>>({});
+  const [parentalLock, setParentalLock] = useState(false);
+  const [parentalUnlocked, setParentalUnlocked] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  const activeItems = useMemo(() => {
+    if (mode === 'live') return liveItems;
+    if (mode === 'series') return seriesItems;
+    return vodItems;
+  }, [liveItems, mode, seriesItems, vodItems]);
+
+  const totalItemsCount = liveItems.length + vodItems.length + seriesItems.length;
+
+  useEffect(() => {
+    if (mode === 'live' && liveItems.length === 0) {
+      if (vodItems.length > 0) {
+        setMode('vod');
+      } else if (seriesItems.length > 0) {
+        setMode('series');
+      }
+    }
+
+    if (mode === 'vod' && vodItems.length === 0) {
+      if (liveItems.length > 0) {
+        setMode('live');
+      } else if (seriesItems.length > 0) {
+        setMode('series');
+      }
+    }
+
+    if (mode === 'series' && seriesItems.length === 0) {
+      if (vodItems.length > 0) {
+        setMode('vod');
+      } else if (liveItems.length > 0) {
+        setMode('live');
+      }
+    }
+  }, [liveItems.length, mode, seriesItems.length, vodItems.length]);
+
+  const featuredItem = useMemo(() => pickFeatured(activeItems), [activeItems]);
+
+  const categorySections = useMemo(() => {
+    return chunkByCategory(activeItems, 5);
+  }, [activeItems]);
+
+  const premiumSections = useMemo<SectionConfig[]>(() => {
+    const sections: SectionConfig[] = [];
+
+    if (mode === 'live') {
+      sections.push({
+        key: 'live_highlights',
+        title: 'Em alta na TV',
+        data: liveItems.slice(0, 12),
+        mode: 'live',
+      });
+
+      sections.push({
+        key: 'live_now',
+        title: 'Agora na TV',
+        data: liveItems.slice(0, 12),
+        mode: 'live',
+      });
+    }
+
+    if (mode === 'vod') {
+      sections.push({
+        key: 'vod_highlights',
+        title: 'Em alta agora',
+        data: vodItems.slice(0, 12),
+        mode: 'vod',
+      });
+
+      sections.push({
+        key: 'vod_recent',
+        title: 'Catálogo premium',
+        data: vodItems.slice(12, 24),
+        mode: 'vod',
+      });
+    }
+
+    if (mode === 'series') {
+      sections.push({
+        key: 'series_highlights',
+        title: 'Séries em destaque',
+        data: seriesItems.slice(0, 12),
+        mode: 'series',
+      });
+
+      sections.push({
+        key: 'series_recent',
+        title: 'Maratonar agora',
+        data: seriesItems.slice(12, 24),
+        mode: 'series',
+      });
+    }
+
+    categorySections.forEach((section, index) => {
+      sections.push({
+        key: `category_${index}_${section.title}`,
+        title: section.title,
+        data: section.data.slice(0, 12),
+        mode,
+        useCategoryNavigation: true,
+      });
+    });
+
+    return sections.filter((section) => section.data.length > 0);
+  }, [categorySections, liveItems, mode, seriesItems, vodItems]);
+
+  const loadDashboard = useCallback(
+    async (useCache: boolean) => {
+      try {
+        setError('');
+
+        const raw = await AsyncStorage.getItem('@iptv_login');
+        if (!raw) {
+          router.replace('/');
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as LoginData;
+        setLogin(parsed);
+
+        let [live, vod, series] = await Promise.all([
+          loadCatalog('live', parsed, useCache),
+          loadCatalog('vod', parsed, useCache),
+          loadCatalog('series', parsed, useCache),
+        ]);
+
+        if (useCache && live.length + vod.length + series.length === 0) {
+          [live, vod, series] = await Promise.all([
+            loadCatalog('live', parsed, false),
+            loadCatalog('vod', parsed, false),
+            loadCatalog('series', parsed, false),
+          ]);
+        }
+
+        const [history, lock, unlocked] = await Promise.all([
+          getHistory(),
+          getParentalLockEnabled(),
+          getUnlockedParentalSession(),
+        ]);
+
+        setLiveItems(live);
+        setVodItems(vod);
+        setSeriesItems(series);
+        setContinueWatching(history.slice(0, 12));
+        setParentalLock(lock);
+        setParentalUnlocked(unlocked);
+
+        const epgTargets = live.slice(0, 10);
+        const epgEntries = await Promise.all(
+          epgTargets.map(async (item) => {
+            const id = getMediaId(item);
+            if (!id) return [id, ''];
+
+            try {
+              const listings = await loadShortEpg(parsed, id, 1);
+              const first = Array.isArray(listings) ? listings[0] : null;
+
+              const currentTitle =
+                typeof first?.title === 'string'
+                  ? first.title
+                  : typeof first?.name === 'string'
+                    ? first.name
+                    : typeof first?.programme_title === 'string'
+                      ? first.programme_title
+                      : '';
+
+              return [id, currentTitle];
+            } catch {
+              return [id, ''];
+            }
+          })
+        );
+
+        setEpgMap(
+          Object.fromEntries(epgEntries.filter(([key]) => Boolean(key)))
+        );
+      } catch (e) {
+        console.log('Dashboard load error:', e);
+        setError('Não foi possível carregar sua home agora.');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [router]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      void loadDashboard(true);
+    }, [loadDashboard])
+  );
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    void loadDashboard(false);
+  };
+
+  const goToLive = (item: MediaBase) => {
+    const id = getMediaId(item);
+    const title = getMediaTitle(item);
+
+    router.push({
+      pathname: '/live-player',
+      params: {
+        id,
+        title,
+      },
+    });
+  };
+
+  const goToDetails = (item: MediaBase, kind: 'vod' | 'series') => {
+    const requiresPin =
+      parentalLock && !parentalUnlocked && isAdultContent(item);
+
+    pushProtectedRoute(
+      '/detalhes',
+      {
+        id: getMediaId(item),
+        name: getMediaTitle(item),
+        kind,
+        posterUri: getPosterUri(getMediaPoster(item)),
+      },
+      requiresPin
+    );
+  };
+
+  const openFeatured = () => {
+    if (!featuredItem) return;
+
+    if (mode === 'live') {
+      goToLive(featuredItem);
+      return;
+    }
+
+    goToDetails(featuredItem, mode === 'series' ? 'series' : 'vod');
+  };
+
+  const openContent = (item: MediaBase, sectionMode: CatalogMode) => {
+    if (sectionMode === 'live') {
+      goToLive(item);
+      return;
+    }
+
+    goToDetails(item, sectionMode === 'series' ? 'series' : 'vod');
+  };
+
+  const openContinueWatching = (item: HistoryCard) => {
+    router.push({
+      pathname: '/player',
+      params: {
+        id: item.id,
+        title: item.name,
+        streamUrl: item.streamUrl,
+      },
+    });
+  };
+
+  const logout = async () => {
+    await AsyncStorage.removeItem('@iptv_login');
+    router.replace('/');
+  };
+
+  const heroTitle = featuredItem ? getMediaTitle(featuredItem) : 'KING IPTV';
+
+  const heroSubtitle = useMemo(() => {
+    if (!featuredItem) {
+      return 'Sua plataforma premium de TV ao vivo, filmes e séries.';
+    }
+
+    if (mode === 'live') {
+      const currentProgram = epgMap[getMediaId(featuredItem)];
+      return currentProgram
+        ? `Agora passando: ${currentProgram}`
+        : 'Acesse canais ao vivo com navegação rápida e visual premium.';
+    }
+
+    if (mode === 'series') {
+      return 'Séries premium com navegação elegante, visual escuro e experiência cinematográfica.';
+    }
+
+    return 'Filmes premium com visual refinado, retomada de progresso e experiência de streaming completa.';
+  }, [epgMap, featuredItem, mode]);
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#7C3AED" />
+        <Text style={styles.loadingText}>Montando sua home premium...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor="#FFFFFF"
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.topBar}>
+        <View>
+          <Text style={styles.brand}>KING IPTV</Text>
+          <Text style={styles.welcome}>
+            {login?.username ? `Olá, ${login.username}` : 'Bem-vindo'}
+          </Text>
+        </View>
+
+        <Pressable style={styles.topIconBtn} onPress={logout}>
+          <Ionicons name="log-out-outline" size={20} color="#FFF" />
+        </Pressable>
+      </View>
+
+      <View style={styles.statsRow}>
+        <View style={styles.statChip}>
+          <Ionicons name="tv-outline" size={14} color="#C4B5FD" />
+          <Text style={styles.statChipText}>TV {liveItems.length}</Text>
+        </View>
+        <View style={styles.statChip}>
+          <Ionicons name="film-outline" size={14} color="#C4B5FD" />
+          <Text style={styles.statChipText}>Filmes {vodItems.length}</Text>
+        </View>
+        <View style={styles.statChip}>
+          <Ionicons name="albums-outline" size={14} color="#C4B5FD" />
+          <Text style={styles.statChipText}>Séries {seriesItems.length}</Text>
+        </View>
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.modeTabs}
+      >
+        {TOP_MODES.map((item) => {
+          const active = item.key === mode;
+
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => setMode(item.key)}
+              style={[styles.modeTab, active && styles.modeTabActive]}
+            >
+              <Ionicons
+                name={item.icon}
+                size={18}
+                color={active ? '#FFFFFF' : '#8D8D99'}
+              />
+              <Text
+                style={[styles.modeTabText, active && styles.modeTabTextActive]}
+              >
+                {item.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {featuredItem ? (
+        <Pressable onPress={openFeatured} style={styles.heroCard}>
+          <ImageBackground
+            source={{ uri: getPosterUri(getMediaPoster(featuredItem)) }}
+            style={styles.heroImage}
+            imageStyle={styles.heroImageStyle}
+          >
+            <LinearGradient
+              colors={[
+                'rgba(0,0,0,0.16)',
+                'rgba(0,0,0,0.42)',
+                'rgba(0,0,0,0.88)',
+              ]}
+              style={styles.heroOverlay}
+            >
+              <View style={styles.heroBadge}>
+                <Text style={styles.heroBadgeText}>
+                  {mode === 'live'
+                    ? 'AO VIVO'
+                    : mode === 'series'
+                      ? 'SÉRIE PREMIUM'
+                      : 'FILME PREMIUM'}
+                </Text>
+              </View>
+
+              <Text style={styles.heroTitle} numberOfLines={2}>
+                {heroTitle}
+              </Text>
+
+              <Text style={styles.heroSubtitle} numberOfLines={3}>
+                {heroSubtitle}
+              </Text>
+
+              <View style={styles.heroActions}>
+                <View style={styles.primaryHeroBtn}>
+                  <Ionicons
+                    name={mode === 'live' ? 'play' : 'information-circle-outline'}
+                    size={18}
+                    color="#0B0B10"
+                  />
+                  <Text style={styles.primaryHeroBtnText}>
+                    {mode === 'live' ? 'Assistir agora' : 'Ver detalhes'}
+                  </Text>
+                </View>
+              </View>
+            </LinearGradient>
+          </ImageBackground>
+        </Pressable>
+      ) : null}
+
+      {error ? (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+
+      {continueWatching.length > 0 ? (
+        <View style={styles.sectionBlock}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Continuar assistindo</Text>
+            <Text style={styles.sectionHint}>Retome de onde parou</Text>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.horizontalList}
+          >
+            {continueWatching.map((item) => (
+              <ContentPoster
+                key={item.id}
+                title={item.name}
+                posterUri={getPosterUri(item.posterUri)}
+                onPress={() => openContinueWatching(item)}
+                compact
+                progress={computeProgressPercent(item.progress, item.duration)}
+                badgeLabel="RETOMAR"
+                subtitle={
+                  item.progress > 0 ? `${Math.floor(item.progress / 60)} min vistos` : 'Novo'
+                }
+              />
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      {premiumSections.map((section) => (
+        <View key={section.key} style={styles.sectionBlock}>
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>{section.title}</Text>
+              {section.key === 'live_now' ? (
+                <Text style={styles.sectionHint}>Programação e canais em destaque</Text>
+              ) : null}
+            </View>
+
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: '/lista_conteudo',
+                  params: {
+                    title: section.useCategoryNavigation ? section.title : 'Catálogo',
+                    mode: section.mode,
+                  },
+                })
+              }
+            >
+              <Text style={styles.sectionLink}>Ver mais</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.horizontalList}
+          >
+            {section.data.map((item, index) => {
+              const id = getMediaId(item) || `${section.key}-${index}`;
+              const subtitle =
+                section.mode === 'live'
+                  ? epgMap[id] || 'Canal ao vivo'
+                  : undefined;
+
+              const badgeLabel =
+                section.mode === 'live'
+                  ? 'TV'
+                  : isAdultContent(item)
+                    ? '18+'
+                    : section.mode === 'series'
+                      ? 'SÉRIE'
+                      : 'FILME';
+
+              return (
+                <ContentPoster
+                  key={`${section.key}-${id}-${index}`}
+                  title={getMediaTitle(item)}
+                  posterUri={getPosterUri(getMediaPoster(item))}
+                  onPress={() => openContent(item, section.mode)}
+                  compact
+                  titleLines={1}
+                  subtitle={subtitle}
+                  badgeLabel={badgeLabel}
+                />
+              );
+            })}
+          </ScrollView>
+        </View>
+      ))}
+
+      {totalItemsCount === 0 ? (
+        <View style={styles.emptyState}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons name="sparkles-outline" size={34} color="#A78BFA" />
+          </View>
+          <Text style={styles.emptyTitle}>Sua home ainda está vazia</Text>
+          <Text style={styles.emptyText}>
+            Atualize a tela ou verifique os dados do seu painel para carregar o catálogo.
+          </Text>
+        </View>
+      ) : null}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#09090C' },
+  content: { paddingTop: 56, paddingBottom: 110 },
+  center: {
+    flex: 1,
+    backgroundColor: '#09090C',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  topBar: {
+    paddingHorizontal: 18,
+    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  brand: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+  },
+  welcome: {
+    marginTop: 4,
+    color: '#A1A1AA',
+    fontSize: 13,
+  },
+  topIconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#17171E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#23232D',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 14,
+    flexWrap: 'wrap',
+  },
+  statChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  statChipText: {
+    color: '#E9D5FF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  modeTabs: {
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+    gap: 10,
+  },
+  modeTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 999,
+    backgroundColor: '#15151C',
+    borderWidth: 1,
+    borderColor: '#242430',
+  },
+  modeTabActive: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED',
+  },
+  modeTabText: {
+    color: '#8D8D99',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modeTabTextActive: {
+    color: '#FFFFFF',
+  },
+  heroCard: {
+    marginHorizontal: 18,
+    marginBottom: 26,
+    borderRadius: 26,
+    overflow: 'hidden',
+    backgroundColor: '#121218',
+  },
+  heroImage: {
+    minHeight: 480,
+    justifyContent: 'flex-end',
+  },
+  heroImageStyle: {
+    borderRadius: 26,
+  },
+  heroOverlay: {
+    padding: 22,
+    minHeight: 480,
+    justifyContent: 'flex-end',
+  },
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(124,58,237,0.90)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 14,
+  },
+  heroBadgeText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 11,
+    letterSpacing: 1,
+  },
+  heroTitle: {
+    color: '#FFFFFF',
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '900',
+    maxWidth: '90%',
+  },
+  heroSubtitle: {
+    marginTop: 10,
+    color: '#E4E4EA',
+    fontSize: 14,
+    lineHeight: 22,
+    maxWidth: '92%',
+  },
+  heroActions: {
+    marginTop: 18,
+  },
+  primaryHeroBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  primaryHeroBtnText: {
+    color: '#0B0B10',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  errorCard: {
+    marginHorizontal: 18,
+    marginBottom: 18,
+    backgroundColor: 'rgba(239,68,68,0.12)',
+    borderColor: 'rgba(239,68,68,0.24)',
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 14,
+  },
+  errorText: {
+    color: '#FECACA',
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  sectionBlock: {
+    marginBottom: 26,
+  },
+  sectionHeader: {
+    paddingHorizontal: 18,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  sectionHint: {
+    color: '#8D8D99',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  sectionLink: {
+    color: '#A78BFA',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  horizontalList: {
+    paddingHorizontal: 18,
+    paddingRight: 8,
+  },
+  emptyState: {
+    paddingTop: 40,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  emptyText: {
+    color: '#8A8A94',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 21,
+    fontSize: 14,
+  },
+});
