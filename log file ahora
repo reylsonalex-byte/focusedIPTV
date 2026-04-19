@@ -1,31 +1,27 @@
-Android Bundling failed 120115ms node_modules\expo-router\entry.js (1199 modules)
- ERROR  SyntaxError: C:\Users\micro\appStream2\app\live-player.tsx: Unexpected token (317:10)
+Android Bundling failed 7998ms node_modules\expo-router\entry.js (1199 modules)
+ ERROR  SyntaxError: C:\Users\micro\appStream2\app\player.tsx: Identifier 'formatClock' has already been declared. (419:6)      
 
-  315 |             streamId,
-  316 |             'm3u8'
-> 317 |           );
-      |           ^
-  318 |
-  319 |         if (!nextStream) {
-  320 |           throw new Error('Canal indisponível');
+  417 | }
+  418 |
+> 419 | const formatClock = (seconds: number) => {
+      |       ^
+  420 |   const total = Math.max(0, Math.floor(seconds));
+  421 |   const hours = Math.floor(total / 3600);
+  422 |   const minutes = Math.floor((total % 3600) / 60);
     at toParseError (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parse-error.ts:95:45)
     at TypeScriptParserMixin.raise (C:\Users\micro\appStream2\node_modules\@babel\parser\src\tokenizer\index.ts:1504:19)        
-    at TypeScriptParserMixin.unexpected (C:\Users\micro\appStream2\node_modules\@babel\parser\src\tokenizer\index.ts:1544:16)   
-    at TypeScriptParserMixin.parseExprAtom (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:1358:22)
-    at TypeScriptParserMixin.parseExprAtom (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\jsx\index.ts:583:22)
-    at TypeScriptParserMixin.parseExprSubscripts (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:742:23)
-    at TypeScriptParserMixin.parseUpdate (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:721:21) 
-    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:683:23)
-    at TypeScriptParserMixin.parseMaybeUnary (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\typescript\index.ts:3893:20)
-    at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:417:14)
-    at TypeScriptParserMixin.parseExprOps (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:429:23)    at TypeScriptParserMixin.parseMaybeConditional (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:384:23)
-    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:301:21)
-    at TypeScriptParserMixin.parseMaybeAssign (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\typescript\index.ts:3764:22)
-    at TypeScriptParserMixin.parseExpressionBase (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:226:23)
-    at callback (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:217:39)
-    at TypeScriptParserMixin.allowInAnd (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:3192:16) 
-    at TypeScriptParserMixin.parseExpression (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\expression.ts:217:17)
-    at TypeScriptParserMixin.parseStatementContent (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:688:23)
+    at TypeScriptScopeHandler.checkRedeclarationInScope (C:\Users\micro\appStream2\node_modules\@babel\parser\src\util\scope.ts:164:19)
+    at TypeScriptScopeHandler.declareName (C:\Users\micro\appStream2\node_modules\@babel\parser\src\util\scope.ts:118:12)       
+    at TypeScriptScopeHandler.declareName (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\typescript\scope.ts:89:11)
+    at TypeScriptParserMixin.declareNameFromIdentifier (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\lval.ts:876:16)
+    at TypeScriptParserMixin.checkIdentifier (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\lval.ts:871:12)   
+    at TypeScriptParserMixin.checkLVal (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\lval.ts:763:12)
+    at TypeScriptParserMixin.parseVarId (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:1633:10)  
+    at TypeScriptParserMixin.parseVarId (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\typescript\index.ts:3700:13)
+    at TypeScriptParserMixin.parseVar (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:1582:12)    
+    at TypeScriptParserMixin.parseVarStatement (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:1251:10)
+    at TypeScriptParserMixin.parseVarStatement (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\typescript\index.ts:3085:33)
+    at TypeScriptParserMixin.parseStatementContent (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:612:21)
     at TypeScriptParserMixin.parseStatementContent (C:\Users\micro\appStream2\node_modules\@babel\parser\src\plugins\typescript\index.ts:3220:20)
     at TypeScriptParserMixin.parseStatementLike (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:482:17)
     at TypeScriptParserMixin.parseModuleItem (C:\Users\micro\appStream2\node_modules\@babel\parser\src\parser\statement.ts:419:17)
@@ -56,3 +52,8 @@ Android Bundling failed 120115ms node_modules\expo-router\entry.js (1199 modules
     at transformFile (C:\Users\micro\appStream2\node_modules\metro\src\DeltaBundler\Worker.flow.js:67:36)
     at Object.transform (C:\Users\micro\appStream2\node_modules\metro\src\DeltaBundler\Worker.flow.js:42:10)
     at WorkerFarm.transform (C:\Users\micro\appStream2\node_modules\metro\src\DeltaBundler\WorkerFarm.js:44:39)
+    at Transformer.transformFile (C:\Users\micro\appStream2\node_modules\metro\src\DeltaBundler\Transformer.js:124:32)
+    at Object.transform (C:\Users\micro\appStream2\node_modules\metro\src\lib\transformHelpers.js:137:12)
+    at transform (C:\Users\micro\appStream2\node_modules\metro\src\DeltaBundler\Graph.js:170:26)
+    at visit (C:\Users\micro\appStream2\node_modules\metro\src\DeltaBundler\buildSubgraph.js:80:29)
+    at async Promise.all (index 14)
