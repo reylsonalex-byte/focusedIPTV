@@ -1,1 +1,387 @@
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
+import { ContentPoster } from '@/components/content-poster';
+import { loadCatalog, type CatalogMode, type LoginData } from '@/src/lib/catalog';
+import {
+  getMediaId,
+  getMediaPoster,
+  getMediaTitle,
+  isAdultContent,
+  type MediaBase,
+} from '@/src/lib/content';
+import { getPosterUri } from '@/src/lib/media';
+import { pushProtectedRoute } from '@/src/lib/navigation';
+import {
+  getParentalLockEnabled,
+  getUnlockedParentalSession,
+} from '@/src/lib/settings';
+
+type Params = {
+  title?: string;
+  mode?: CatalogMode | string;
+  seriesId?: string;
+};
+
+const normalize = (value: unknown) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+export default function ListaConteudo() {
+  const router = useRouter();
+  const params = useLocalSearchParams<Params>();
+
+  const title =
+    typeof params.title === 'string' && params.title.trim()
+      ? params.title.trim()
+      : 'Catálogo';
+
+  const mode: CatalogMode =
+    params.mode === 'live' || params.mode === 'series' ? params.mode : 'vod';
+
+  const seriesId =
+    typeof params.seriesId === 'string' && params.seriesId.trim()
+      ? params.seriesId.trim()
+      : '';
+
+  const [items, setItems] = useState<MediaBase[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [parentalLock, setParentalLock] = useState(false);
+  const [parentalUnlocked, setParentalUnlocked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError('');
+
+        const raw = await AsyncStorage.getItem('@iptv_login');
+        if (!raw) {
+          router.replace('/');
+          return;
+        }
+
+        const login = JSON.parse(raw) as LoginData;
+
+        const [catalog, lock, unlocked] = await Promise.all([
+          loadCatalog(mode, login, true),
+          getParentalLockEnabled(),
+          getUnlockedParentalSession(),
+        ]);
+
+        if (cancelled) return;
+
+        setItems(Array.isArray(catalog) ? catalog : []);
+        setParentalLock(lock);
+        setParentalUnlocked(unlocked);
+      } catch (e) {
+        console.log('Erro ao carregar lista:', e);
+        if (!cancelled) {
+          setError('Não foi possível carregar essa lista agora.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, router]);
+
+  const filteredItems = useMemo(() => {
+    const normalizedTitle = normalize(title);
+
+    if (!items.length) return [];
+
+    if (title === 'Catálogo') {
+      return items.slice(0, 100);
+    }
+
+    if (mode === 'series') {
+      if (seriesId) {
+        const exactById = items.filter((item) => getMediaId(item) === seriesId);
+        if (exactById.length > 0) {
+          return exactById.slice(0, 60);
+        }
+      }
+
+      const byExactTitle = items.filter((item) => {
+        const itemTitle = normalize(getMediaTitle(item));
+        return itemTitle === normalizedTitle;
+      });
+
+      if (byExactTitle.length > 0) {
+        return byExactTitle.slice(0, 60);
+      }
+
+      const byContainsTitle = items.filter((item) => {
+        const itemTitle = normalize(getMediaTitle(item));
+        return itemTitle.includes(normalizedTitle);
+      });
+
+      if (byContainsTitle.length > 0) {
+        return byContainsTitle.slice(0, 60);
+      }
+    }
+
+    const matches = items.filter((item) => {
+      const itemTitle = normalize(getMediaTitle(item));
+      const category = normalize(item.category_name);
+      const categoryId = normalize(String(item.category_id ?? ''));
+      const genre = normalize(item.genre);
+
+      return (
+        itemTitle === normalizedTitle ||
+        itemTitle.includes(normalizedTitle) ||
+        category === normalizedTitle ||
+        category.includes(normalizedTitle) ||
+        categoryId === normalizedTitle ||
+        genre === normalizedTitle ||
+        genre.includes(normalizedTitle)
+      );
+    });
+
+    return matches.slice(0, 100);
+  }, [items, mode, seriesId, title]);
+
+  const handleOpen = (item: MediaBase) => {
+    const id = getMediaId(item);
+    const name = getMediaTitle(item);
+
+    if (mode === 'live') {
+      router.push({
+        pathname: '/live-player',
+        params: {
+          id,
+          title: name,
+        },
+      });
+      return;
+    }
+
+    const requiresPin =
+      parentalLock && !parentalUnlocked && isAdultContent(item);
+
+    pushProtectedRoute(
+      '/detalhes',
+      {
+        id,
+        name,
+        kind: mode === 'series' ? 'series' : 'vod',
+        posterUri: getPosterUri(getMediaPoster(item)),
+      },
+      requiresPin
+    );
+  };
+
+  const modeLabel =
+    mode === 'live' ? 'Canais ao vivo' : mode === 'series' ? 'Séries' : 'Filmes';
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#7C3AED" />
+        <Text style={styles.loadingText}>Carregando catálogo premium...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <LinearGradient
+        colors={['#111118', '#0C0C12', '#09090C']}
+        style={styles.header}
+      >
+        <View style={styles.headerTop}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={22} color="#FFF" />
+          </Pressable>
+
+          <View style={styles.headerBadge}>
+            <Text style={styles.headerBadgeText}>{modeLabel.toUpperCase()}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>
+          {filteredItems.length} itens disponíveis nesta seleção
+        </Text>
+      </LinearGradient>
+
+      {error ? (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+
+      <FlatList
+        data={filteredItems}
+        numColumns={2}
+        keyExtractor={(item, index) => `${mode}-${getMediaId(item)}-${index}`}
+        renderItem={({ item }) => (
+          <ContentPoster
+            title={getMediaTitle(item)}
+            posterUri={getPosterUri(getMediaPoster(item))}
+            onPress={() => handleOpen(item)}
+            style={styles.card}
+            titleLines={1}
+            badgeLabel={
+              mode === 'live'
+                ? 'TV'
+                : isAdultContent(item)
+                  ? '18+'
+                  : mode === 'series'
+                    ? 'SÉRIE'
+                    : 'FILME'
+            }
+          />
+        )}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="film-outline" size={34} color="#A78BFA" />
+            </View>
+            <Text style={styles.emptyTitle}>Nada encontrado</Text>
+            <Text style={styles.emptyText}>
+              Não encontramos itens para esta seção no momento.
+            </Text>
+          </View>
+        }
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#09090C',
+  },
+  center: {
+    flex: 1,
+    backgroundColor: '#09090C',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  header: {
+    paddingTop: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 20,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerBadge: {
+    backgroundColor: 'rgba(124,58,237,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.34)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  headerBadgeText: {
+    color: '#E9D5FF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  title: {
+    color: '#FFF',
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  subtitle: {
+    color: '#A1A1AA',
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  list: {
+    paddingHorizontal: 12,
+    paddingTop: 14,
+    paddingBottom: 120,
+  },
+  card: {
+    margin: 6,
+  },
+  emptyState: {
+    paddingTop: 80,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  emptyText: {
+    color: '#8A8A94',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 21,
+    fontSize: 14,
+  },
+  errorCard: {
+    marginHorizontal: 18,
+    marginTop: 14,
+    backgroundColor: 'rgba(239,68,68,0.12)',
+    borderColor: 'rgba(239,68,68,0.24)',
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 14,
+  },
+  errorText: {
+    color: '#FECACA',
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+});
