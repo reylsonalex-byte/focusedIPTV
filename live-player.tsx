@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -35,6 +35,40 @@ export default function LivePlayer() {
   const [loading, setLoading] = useState(true);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const enableRotation = async () => {
+      try {
+        await ScreenOrientation.lockAsync(
+          ScreenOrientation.OrientationLock.ALL_BUT_UPSIDE_DOWN
+        );
+      } catch (e) {
+        console.log('Erro ao liberar rotação no live-player:', e);
+      }
+    };
+
+    void enableRotation();
+
+    return () => {
+      void ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP
+      ).catch((e) => console.log('Erro ao restaurar portrait:', e));
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        if (directStreamUrl) {
+          if (!cancelled) {
+            setStreamUrl(directStreamUrl);
+          }
+          return  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const enableRotation = async () => {
